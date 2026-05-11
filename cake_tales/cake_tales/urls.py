@@ -27,6 +27,8 @@ urlpatterns = [
     path('',include('cakes.urls')),
 
     path('',include('authentication.urls')),
+
+    path('',include('payment.urls')),
 ]
 
 

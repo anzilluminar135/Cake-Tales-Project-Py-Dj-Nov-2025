@@ -4,11 +4,21 @@ from django.shortcuts import render,redirect
 
 from django.views import View
 
-from .models import Cake
+from .models import Cake,Wishlist,Cart,Order,DeliveryAddress
 
 from .forms import AddCakeForm
 
 from django.db.models import Q
+
+from django.contrib.auth.decorators import login_required
+
+from django.utils.decorators import method_decorator
+
+from authentication.permissions import allowed_permission_roles
+
+from cake_tales.utils import generate_order_id
+
+from payment.models import Payment
 
 
 
@@ -46,15 +56,19 @@ class HomeView(View):
             
             data['search_results'] = search_results
 
+            data['query'] = query
+
         return render(request,self.template,context=data)
 
-
+# @method_decorator(login_required(login_url='login'),name='dispatch')
+@method_decorator(allowed_permission_roles(['Admin']),name='dispatch')
 class AddACakeView(View):
 
     template = 'cakes/add-cake.html'
 
     form_class = AddCakeForm
 
+    
     def get(self,request,*args,**kwargs):
 
         form = self.form_class()
@@ -122,7 +136,7 @@ class CakeDetailsView(View):
         return render(request,self.template,context=data)
     
 
-
+@method_decorator(allowed_permission_roles(['Admin']),name='dispatch')
 class CakeEditView(View):
 
     template = 'cakes/cake-edit.html'
@@ -159,7 +173,7 @@ class CakeEditView(View):
 
         return render(request,self.template,context=data)
     
-
+@method_decorator(allowed_permission_roles(['Admin']),name='dispatch')
 class CakeDeleteView(View):
 
     def get(self,request,*args,**kwargs):
@@ -175,4 +189,159 @@ class CakeDeleteView(View):
         cake.save()
 
         return redirect('home')
+    
+
+@method_decorator(allowed_permission_roles(['User']),name='dispatch')
+class AddtoWishList(View):
+
+    def get(self,request,*args,**kwargs):
+
+        uuid = kwargs.get('uuid')
+
+        user = request.user
+
+        cake = Cake.objects.get(uuid=uuid)
+
+        wishlist,_ = Wishlist.objects.get_or_create(user=user)
+
+        wishlist.cakes.add(cake)
+
+        return redirect('home')
+    
+@method_decorator(allowed_permission_roles(['User']),name='dispatch')
+class RemovefromWishList(View):
+
+    def get(self,request,*args,**kwargs):
+
+        uuid = kwargs.get('uuid')
+
+        user = request.user
+
+        cake = Cake.objects.get(uuid=uuid)
+
+        wishlist = Wishlist.objects.get(user=user)
+
+        wishlist.cakes.remove(cake)
+
+        return redirect('home')
+
+@method_decorator(allowed_permission_roles(['User']),name='dispatch')
+class WishListView(View):
+
+    template = 'cakes/wishlist.html'
+
+    def get(self,request,*args,**kwargs):
+
+        return render(request,self.template)
+
+
+
+@method_decorator(allowed_permission_roles(['User']),name='dispatch')
+class AddtoCart(View):
+
+    def get(self,request,*args,**kwargs):
+
+        uuid = kwargs.get('uuid')
+
+        user = request.user
+
+        cake = Cake.objects.get(uuid=uuid)
+
+        cart,_ = Cart.objects.get_or_create(user=user)
+
+        cart.cakes.add(cake)
+
+        return redirect('home')
+
+
+
+@method_decorator(allowed_permission_roles(['User']),name='dispatch')
+class RemovefromCart(View):
+
+    def get(self,request,*args,**kwargs):
+
+        uuid = kwargs.get('uuid')
+
+        user = request.user
+
+        cake = Cake.objects.get(uuid=uuid)
+
+        cart = Cart.objects.get(user=user)
+
+        cart.cakes.remove(cake)
+
+        return redirect('home')
+    
+
+class CheckoutView(View):
+
+    template = 'cakes/checkout.html'
+
+    def get(self,request,*args,**kwargs):
+
+        user = request.user
+
+        order_id = generate_order_id()
+
+        cakes_ids = user.cart.cakes.values_list('id',flat=True)
+
+        cakes = user.cart.cakes.all()
+
+        total_price = user.cart.get_total
+
+        orders = Order.objects.filter(user=user,total_price=total_price,cakes__in = cakes_ids,order_placed=False)
+
+        if orders.exists():
+
+            order = orders.distinct().first()
+
+        else:
+
+            order = Order.objects.create(user=user,order_id=order_id,total_price=total_price)    
+            
+            order.cakes.add(*cakes)
+
+        data = {'order':order}    
+
+        return render(request,self.template,context=data)   
+
+
+class OrderPlacedView(View):
+
+    def post(self,request,*args,**kwargs):
+
+        order_uuid = kwargs.get('uuid')
+
+        address_uuid = request.POST.get('address')
+
+        payment_method = request.POST.get('payment')
+
+        address = DeliveryAddress.objects.get(uuid=address_uuid)
+
+        order = Order.objects.get(user=request.user,uuid=order_uuid)
+
+        order.delivery_address = address
+
+        order.payment_method = payment_method
+
+        order.save()
+
+        payment = Payment.objects.filter(order=order)
+
+        if payment.exists():
+
+            payment = payment.first()
+
+        else :
+
+            payment = Payment.objects.create(order=order,amount=order.total_price)   
+
+        if payment_method == 'Online':
+
+            return redirect('razorpay',uuid=payment.uuid)
+
+        else :
+            
+            return redirect('home') 
+
 
